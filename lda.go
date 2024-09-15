@@ -45,13 +45,13 @@ func NewLDA(numTopics int) *LDA {
 }
 
 // TrainFromFile trains the LDA model using data from a file.
-func (lda *LDA) TrainFromFile(filename string, numIterations int) error {
+func (lda *LDA) TrainFromFile(filename string, numIterations int, iterCh chan int, errCh chan error) {
 	data, err := os.ReadFile(filename)
 	if err != nil {
-		return err
+		errCh <- err
 	}
 	documents := strings.Split(string(data), "\n")
-	return lda.Train(documents, numIterations)
+	lda.Train(documents, numIterations, iterCh, errCh)
 }
 
 // UpdateFromFile updates the LDA model incrementally using data from a file.
@@ -65,24 +65,25 @@ func (lda *LDA) UpdateFromFile(filename string, numIterations int) error {
 }
 
 // Train trains the LDA model on the provided documents.
-func (lda *LDA) Train(documents []string, numIterations int) error {
+func (lda *LDA) Train(documents []string, numIterations int, iterCh chan int, errCh chan error) {
 	if len(documents) == 0 {
-		return errors.New("no documents provided for training")
+		errCh <- errors.New("no documents provided for training")
 	}
 
 	lda.buildVocabulary(documents)
 	lda.initializeLambda()
-
-	for iter := 0; iter < numIterations; iter++ {
-		err := lda.onlineUpdate(documents)
-		if err != nil {
-			return err
+	go func() {
+		for iter := 0; iter < numIterations; iter++ {
+			err := lda.onlineUpdate(documents)
+			if err != nil {
+				errCh <- err
+				break
+			}
+			iterCh <- iter + 1
 		}
-		// Optional: Add logging to monitor convergence
-		fmt.Printf("Iteration %d completed.\n", iter+1)
-	}
-
-	return nil
+		close(iterCh)
+		close(errCh)
+	}()
 }
 
 // Update incrementally updates the LDA model with new documents.

@@ -1,6 +1,7 @@
 package LDA_go
 
 import (
+	"fmt"
 	"os"
 	"testing"
 )
@@ -18,9 +19,30 @@ func TestLDATraining(t *testing.T) {
 	numIterations := 10
 
 	model := NewLDA(numTopics)
-	err := model.Train(documents, numIterations)
-	if err != nil {
-		t.Errorf("Error training LDA model: %v", err)
+	iterCh := make(chan int)
+	errCh := make(chan error)
+	go model.Train(documents, numIterations, iterCh, errCh)
+
+	for {
+		done := false
+		select {
+		case v, ok := <-iterCh:
+			if !ok {
+				done = true
+				break
+			}
+			fmt.Println(v)
+		case v, ok := <-errCh:
+			if !ok {
+				done = true
+				break
+			}
+			t.Errorf("Expected no error, got %s", v)
+			done = true
+		}
+		if done {
+			break
+		}
 	}
 
 	topics := model.GetTopics(5)
@@ -34,7 +56,7 @@ func TestLDATraining(t *testing.T) {
 	}
 
 	// Test saving the model
-	err = model.SaveModel("test_model.json")
+	err := model.SaveModel("test_model.json")
 	if err != nil {
 		t.Errorf("Error saving model: %v", err)
 	}
