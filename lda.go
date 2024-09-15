@@ -245,7 +245,7 @@ func (lda *LDA) initializeLambda() {
 		for w := 0; w < lda.vocabularySize; w++ {
 			lda.lambda[k][w] = seededRand.Float64() + 1e-2
 		}
-		normalize(lda.lambda[k])
+		normalize(&lda.lambda[k])
 	}
 }
 
@@ -301,7 +301,7 @@ func (lda *LDA) onlineUpdate(documents []string) error {
 			for n, wordID := range doc {
 				lda.lambda[k][wordID] = (1-rho)*lda.lambda[k][wordID] + rho*(lda.eta+float64(len(docs))*phi[n][k])
 			}
-			normalize(lda.lambda[k])
+			normalize(&lda.lambda[k])
 		}
 	}
 	lda.updateCount++
@@ -316,6 +316,8 @@ func (lda *LDA) variationalInference(doc []int) ([]float64, error) {
 
 	phi := make([][]float64, len(doc))
 	maxIter := 50
+	epsilon := 1e-10
+
 	for iter := 0; iter < maxIter; iter++ {
 		gammaOld := make([]float64, lda.numTopics)
 		copy(gammaOld, gamma)
@@ -323,8 +325,15 @@ func (lda *LDA) variationalInference(doc []int) ([]float64, error) {
 			phi_nk := make([]float64, lda.numTopics)
 			sum := 0.0
 			for k := 0; k < lda.numTopics; k++ {
-				phi_nk[k] = lda.lambda[k][wordID] * math.Exp(digamma(gamma[k]))
+				gammaK := gamma[k]
+				if gammaK <= 0 {
+					gammaK = epsilon
+				}
+				phi_nk[k] = lda.lambda[k][wordID] * math.Exp(digamma(gammaK))
 				sum += phi_nk[k]
+			}
+			if sum == 0 {
+				sum = epsilon
 			}
 			for k := 0; k < lda.numTopics; k++ {
 				phi_nk[k] /= sum
@@ -335,6 +344,9 @@ func (lda *LDA) variationalInference(doc []int) ([]float64, error) {
 			gamma[k] = lda.alpha
 			for n := 0; n < len(doc); n++ {
 				gamma[k] += phi[n][k]
+			}
+			if gamma[k] <= 0 {
+				gamma[k] = epsilon
 			}
 		}
 		if converged(gamma, gammaOld, 1e-6) {
@@ -389,7 +401,7 @@ func (lda *LDA) extendVocabulary(documents []string) {
 		// Extend lambda
 		for k := 0; k < lda.numTopics; k++ {
 			lda.lambda[k] = append(lda.lambda[k], make([]float64, newWords)...)
-			normalize(lda.lambda[k])
+			normalize(&lda.lambda[k])
 		}
 	}
 }
@@ -409,18 +421,23 @@ func tokenize(text string) []string {
 	return tokens
 }
 
-func normalize(vec []float64) {
+func normalize(vec *[]float64) {
 	sum := 0.0
-	for _, val := range vec {
+	for _, val := range *vec {
 		sum += val
 	}
-	for i := range vec {
-		vec[i] /= sum
+	if sum == 0 {
+		sum = 1e-10 // Small epsilon to prevent division by zero
+	}
+	for i := range *vec {
+		(*vec)[i] /= sum
 	}
 }
 
 func digamma(x float64) float64 {
-	// Simple approximation of digamma function
+	if x <= 0 {
+		x = 1e-10
+	}
 	result := 0.0
 	for x < 7 {
 		result -= 1 / x
