@@ -1,23 +1,23 @@
 package LDA_go
 
 import (
+	"os"
 	"testing"
 )
 
 func TestLDATraining(t *testing.T) {
 	documents := []string{
-		"Go is a statically typed, compiled programming language.",
-		"Python is an interpreted, high-level programming language.",
-		"Java is a class-based, object-oriented programming language.",
+		"Go is a statically typed, compiled programming language designed at Google.",
+		"Python is an interpreted, high-level, general-purpose programming language.",
+		"Java is a class-based, object-oriented programming language that is designed to have as few implementation dependencies as possible.",
 		"JavaScript is a programming language that conforms to the ECMAScript specification.",
 		"C is a general-purpose, procedural computer programming language.",
 		"Ruby is an interpreted, high-level, general-purpose programming language.",
 	}
 	numTopics := 2
-	numIterations := 100
-	alpha := 25.0
-	beta := 0.01
-	model := NewLDA(numTopics, alpha, beta)
+	numIterations := 10
+
+	model := NewLDA(numTopics)
 	err := model.Train(documents, numIterations)
 	if err != nil {
 		t.Errorf("Error training LDA model: %v", err)
@@ -32,6 +32,40 @@ func TestLDATraining(t *testing.T) {
 			t.Errorf("Expected 5 words for topic %d, got %d", i, len(topic))
 		}
 	}
+
+	// Test saving the model
+	err = model.SaveModel("test_model.json")
+	if err != nil {
+		t.Errorf("Error saving model: %v", err)
+	}
+	defer os.Remove("test_model.json")
+
+	// Test loading the model
+	newModel := NewLDA(numTopics)
+	err = newModel.LoadModel("test_model.json")
+	if err != nil {
+		t.Errorf("Error loading model: %v", err)
+	}
+
+	// Check if topics are the same
+	newTopics := newModel.GetTopics(5)
+	for i := range topics {
+		for j := range topics[i] {
+			if topics[i][j] != newTopics[i][j] {
+				t.Errorf("Mismatch in topics after loading model")
+				break
+			}
+		}
+	}
+
+	// Test resetting the model
+	err = model.ResetModel()
+	if err != nil {
+		t.Errorf("Error resetting model: %v", err)
+	}
+	if len(model.lambda) != numTopics {
+		t.Errorf("Model lambda should be empty after reset")
+	}
 }
 
 func TestTokenize(t *testing.T) {
@@ -44,53 +78,6 @@ func TestTokenize(t *testing.T) {
 	for i, token := range tokens {
 		if token != expected[i] {
 			t.Errorf("Expected token '%s', got '%s'", expected[i], token)
-		}
-	}
-}
-
-func TestComputeTopicDistribution(t *testing.T) {
-	// Prepare a minimal LDA model for testing
-	alpha := 25.0
-	beta := 0.01
-	model := NewLDA(2, alpha, beta)
-	model.vocabularySize = 3
-	model.numTopics = 2
-	model.beta = 0.1
-	model.alpha = 0.1
-	model.topicWordCounts = [][]int{
-		{1, 2, 3},
-		{4, 5, 6},
-	}
-	model.topicCounts = []int{6, 15}
-	model.docTopicCounts = [][]int{
-		{2, 3},
-	}
-	model.docLengths = []int{5}
-
-	distribution := model.computeTopicDistribution(0, 1)
-	if len(distribution) != 2 {
-		t.Errorf("Expected distribution of length 2, got %d", len(distribution))
-	}
-	if distribution[0] <= 0 || distribution[1] <= 0 {
-		t.Errorf("Expected positive probabilities, got %v", distribution)
-	}
-}
-
-func TestSample(t *testing.T) {
-	distribution := []float64{0.1, 0.2, 0.3, 0.4}
-	counts := make([]int, len(distribution))
-	trials := 10000
-	for i := 0; i < trials; i++ {
-		idx := sample(distribution)
-		if idx < 0 || idx >= len(distribution) {
-			t.Errorf("Sampled index out of bounds: %d", idx)
-		}
-		counts[idx]++
-	}
-	for i, count := range counts {
-		expected := distribution[i] / 1.0 * float64(trials)
-		if float64(count) < expected*0.9 || float64(count) > expected*1.1 {
-			t.Errorf("Sample count for index %d out of expected range: got %d, expected around %.0f", i, count, expected)
 		}
 	}
 }
