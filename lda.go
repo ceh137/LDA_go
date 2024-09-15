@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"math"
 	"math/rand"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -46,7 +46,7 @@ func NewLDA(numTopics int) *LDA {
 
 // TrainFromFile trains the LDA model using data from a file.
 func (lda *LDA) TrainFromFile(filename string, numIterations int) error {
-	data, err := ioutil.ReadFile(filename)
+	data, err := os.ReadFile(filename)
 	if err != nil {
 		return err
 	}
@@ -56,7 +56,7 @@ func (lda *LDA) TrainFromFile(filename string, numIterations int) error {
 
 // UpdateFromFile updates the LDA model incrementally using data from a file.
 func (lda *LDA) UpdateFromFile(filename string, numIterations int) error {
-	data, err := ioutil.ReadFile(filename)
+	data, err := os.ReadFile(filename)
 	if err != nil {
 		return err
 	}
@@ -146,7 +146,7 @@ func (lda *LDA) SaveModel(filename string) error {
 		return err
 	}
 
-	return ioutil.WriteFile(filename, jsonData, 0644)
+	return os.WriteFile(filename, jsonData, 0644)
 }
 
 // LoadModel loads the model weights from a file.
@@ -154,7 +154,7 @@ func (lda *LDA) LoadModel(filename string) error {
 	lda.mutex.Lock()
 	defer lda.mutex.Unlock()
 
-	jsonData, err := ioutil.ReadFile(filename)
+	jsonData, err := os.ReadFile(filename)
 	if err != nil {
 		return err
 	}
@@ -226,11 +226,11 @@ func (lda *LDA) initializeLambda() {
 	lda.mutex.Lock()
 	defer lda.mutex.Unlock()
 
-	rand.Seed(time.Now().UnixNano())
+	seededRand := rand.New(rand.NewSource(time.Now().UnixNano()))
 	for k := 0; k < lda.numTopics; k++ {
 		lda.lambda[k] = make([]float64, lda.vocabularySize)
 		for w := 0; w < lda.vocabularySize; w++ {
-			lda.lambda[k][w] = rand.Float64() + 1e-2
+			lda.lambda[k][w] = seededRand.Float64() + 1e-2
 		}
 		normalize(lda.lambda[k])
 	}
