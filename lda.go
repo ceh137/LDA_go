@@ -49,25 +49,34 @@ func (lda *LDA) TrainFromFile(filename string, numIterations int, iterCh chan in
 	data, err := os.ReadFile(filename)
 	if err != nil {
 		errCh <- err
+		close(iterCh)
+		close(errCh)
+		return
 	}
 	documents := strings.Split(string(data), "\n")
 	lda.Train(documents, numIterations, iterCh, errCh)
 }
 
 // UpdateFromFile updates the LDA model incrementally using data from a file.
-func (lda *LDA) UpdateFromFile(filename string, numIterations int, iterCh chan int, errCh chan error) error {
+func (lda *LDA) UpdateFromFile(filename string, numIterations int, iterCh chan int, errCh chan error) {
 	data, err := os.ReadFile(filename)
 	if err != nil {
-		return err
+		errCh <- err
+		close(iterCh)
+		close(errCh)
+		return
 	}
 	documents := strings.Split(string(data), "\n")
-	return lda.Update(documents, numIterations, iterCh, errCh)
+	lda.Update(documents, numIterations, iterCh, errCh)
 }
 
 // Train trains the LDA model on the provided documents.
 func (lda *LDA) Train(documents []string, numIterations int, iterCh chan int, errCh chan error) {
 	if len(documents) == 0 {
 		errCh <- errors.New("no documents provided for training")
+		close(iterCh)
+		close(errCh)
+		return
 	}
 
 	lda.buildVocabulary(documents)
