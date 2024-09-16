@@ -87,14 +87,14 @@ func TestLDATraining(t *testing.T) {
 	if err != nil {
 		t.Errorf("Error resetting model: %v", err)
 	}
-	if len(model.lambda) != numTopics {
+	if len(model.Lambda) != numTopics {
 		t.Errorf("Model lambda should be empty after reset")
 	}
 }
 
 func TestTokenize(t *testing.T) {
 	text := "Go is an open-source programming language."
-	tokens := tokenize(text)
+	tokens := Tokenize(text)
 	expected := []string{"go", "is", "an", "open", "source", "programming", "language"}
 	if len(tokens) != len(expected) {
 		t.Errorf("Expected %d tokens, got %d", len(expected), len(tokens))
@@ -234,10 +234,10 @@ Ruby is an interpreted, high-level, general-purpose programming language.`
 
 	// Score a new document
 	newDocument := "Go and Python are popular programming languages."
-	words := tokenize(newDocument)
+	words := Tokenize(newDocument)
 	wordIDs := make([]int, 0)
 	for _, word := range words {
-		if id, exists := loadedModel.word2id[word]; exists {
+		if id, exists := loadedModel.Word2id[word]; exists {
 			wordIDs = append(wordIDs, id)
 		}
 	}
@@ -246,7 +246,7 @@ Ruby is an interpreted, high-level, general-purpose programming language.`
 	}
 
 	// Perform variational inference on the new document
-	gamma, err := loadedModel.variationalInference(wordIDs)
+	gamma, err := loadedModel.VariationalInference(wordIDs)
 	if err != nil {
 		t.Fatalf("Error during variational inference: %v", err)
 	}
