@@ -14,25 +14,23 @@ import (
 	"time"
 )
 
+// LDA represents the Latent Dirichlet Allocation model.
 type LDA struct {
 	numTopics      int
 	alpha          float64
 	eta            float64
-	documents      [][]int
 	vocabulary     []string
 	word2id        map[string]int
 	id2word        map[int]string
 	vocabularySize int
 
 	lambda      [][]float64 // Topic-word distributions
-	gamma       [][]float64 // Document-topic distributions
 	updateCount int
 
 	mutex sync.Mutex
 }
 
 // NewLDA creates a new LDA model with the specified number of topics.
-// Default values for alpha and eta are set to 1/numTopics and 1/numTopics respectively.
 func NewLDA(numTopics int) *LDA {
 	alpha := 1.0 / float64(numTopics)
 	eta := 1.0 / float64(numTopics)
@@ -45,6 +43,7 @@ func NewLDA(numTopics int) *LDA {
 }
 
 // TrainFromFile trains the LDA model using data from a file.
+// It now supports iteration passing via channels and error handling.
 func (lda *LDA) TrainFromFile(filename string, numIterations int, iterCh chan int, errCh chan error) {
 	data, err := os.ReadFile(filename)
 	if err != nil {
@@ -81,6 +80,7 @@ func (lda *LDA) Train(documents []string, numIterations int, iterCh chan int, er
 
 	lda.buildVocabulary(documents)
 	lda.initializeLambda()
+
 	go func() {
 		for iter := 0; iter < numIterations; iter++ {
 			err := lda.onlineUpdate(documents)
@@ -111,7 +111,6 @@ func (lda *LDA) Update(documents []string, numIterations int, iterCh chan int, e
 		close(iterCh)
 		close(errCh)
 	}()
-
 }
 
 // GetTopics returns the top N words for each topic.
@@ -129,9 +128,9 @@ func (lda *LDA) GetTopics(numWords int) [][]string {
 		sort.Slice(wordProbabilities, func(i, j int) bool {
 			return wordProbabilities[i].probability > wordProbabilities[j].probability
 		})
-		topWords := make([]string, numWords)
+		topWords := make([]string, 0, numWords)
 		for i := 0; i < numWords && i < len(wordProbabilities); i++ {
-			topWords[i] = wordProbabilities[i].word
+			topWords = append(topWords, wordProbabilities[i].word)
 		}
 		topics[k] = topWords
 	}
@@ -233,7 +232,7 @@ func (lda *LDA) ResetModel() error {
 	return nil
 }
 
-// internal functions
+// Internal functions
 
 func (lda *LDA) initializeLambda() {
 	lda.mutex.Lock()
@@ -245,7 +244,7 @@ func (lda *LDA) initializeLambda() {
 		for w := 0; w < lda.vocabularySize; w++ {
 			lda.lambda[k][w] = seededRand.Float64() + 1e-2
 		}
-		normalize(&lda.lambda[k])
+		normalize(lda.lambda[k])
 	}
 }
 
@@ -280,7 +279,8 @@ func (lda *LDA) onlineUpdate(documents []string) error {
 
 	lda.mutex.Lock()
 	defer lda.mutex.Unlock()
-	rho := math.Pow(float64(lda.updateCount)+float64(1), -0.7) // Learning rate
+	rho := math.Pow(float64(lda.updateCount)+1, -0.7) // Learning rate
+	epsilon := 1e-10
 	for d, doc := range docs {
 		gamma := gammaUpdates[d]
 		phi := make([][]float64, len(doc))
@@ -288,11 +288,20 @@ func (lda *LDA) onlineUpdate(documents []string) error {
 			phi_nk := make([]float64, lda.numTopics)
 			sum := 0.0
 			for k := 0; k < lda.numTopics; k++ {
-				phi_nk[k] = lda.lambda[k][wordID] * math.Exp(digamma(gamma[k]))
+				gammaK := gamma[k]
+				if gammaK <= 0 {
+					gammaK = epsilon
+				}
+				phi_nk[k] = lda.lambda[k][wordID] * math.Exp(digamma(gammaK))
+				phi_nk[k] = checkValid(phi_nk[k])
 				sum += phi_nk[k]
+			}
+			if sum == 0 {
+				sum = epsilon
 			}
 			for k := 0; k < lda.numTopics; k++ {
 				phi_nk[k] /= sum
+				phi_nk[k] = checkValid(phi_nk[k])
 			}
 			phi[n] = phi_nk
 		}
@@ -300,8 +309,9 @@ func (lda *LDA) onlineUpdate(documents []string) error {
 		for k := 0; k < lda.numTopics; k++ {
 			for n, wordID := range doc {
 				lda.lambda[k][wordID] = (1-rho)*lda.lambda[k][wordID] + rho*(lda.eta+float64(len(docs))*phi[n][k])
+				lda.lambda[k][wordID] = checkValid(lda.lambda[k][wordID])
 			}
-			normalize(&lda.lambda[k])
+			normalize(lda.lambda[k])
 		}
 	}
 	lda.updateCount++
@@ -312,6 +322,9 @@ func (lda *LDA) variationalInference(doc []int) ([]float64, error) {
 	gamma := make([]float64, lda.numTopics)
 	for k := 0; k < lda.numTopics; k++ {
 		gamma[k] = lda.alpha + float64(len(doc))/float64(lda.numTopics)
+		if gamma[k] <= 0 {
+			gamma[k] = 1e-10
+		}
 	}
 
 	phi := make([][]float64, len(doc))
@@ -330,6 +343,7 @@ func (lda *LDA) variationalInference(doc []int) ([]float64, error) {
 					gammaK = epsilon
 				}
 				phi_nk[k] = lda.lambda[k][wordID] * math.Exp(digamma(gammaK))
+				phi_nk[k] = checkValid(phi_nk[k])
 				sum += phi_nk[k]
 			}
 			if sum == 0 {
@@ -337,6 +351,7 @@ func (lda *LDA) variationalInference(doc []int) ([]float64, error) {
 			}
 			for k := 0; k < lda.numTopics; k++ {
 				phi_nk[k] /= sum
+				phi_nk[k] = checkValid(phi_nk[k])
 			}
 			phi[n] = phi_nk
 		}
@@ -345,7 +360,7 @@ func (lda *LDA) variationalInference(doc []int) ([]float64, error) {
 			for n := 0; n < len(doc); n++ {
 				gamma[k] += phi[n][k]
 			}
-			if gamma[k] <= 0 {
+			if gamma[k] <= 0 || math.IsNaN(gamma[k]) || math.IsInf(gamma[k], 0) {
 				gamma[k] = epsilon
 			}
 		}
@@ -400,8 +415,12 @@ func (lda *LDA) extendVocabulary(documents []string) {
 	if newWords > 0 {
 		// Extend lambda
 		for k := 0; k < lda.numTopics; k++ {
-			lda.lambda[k] = append(lda.lambda[k], make([]float64, newWords)...)
-			normalize(&lda.lambda[k])
+			newEntries := make([]float64, newWords)
+			for i := 0; i < newWords; i++ {
+				newEntries[i] = lda.eta
+			}
+			lda.lambda[k] = append(lda.lambda[k], newEntries...)
+			normalize(lda.lambda[k])
 		}
 	}
 }
@@ -421,16 +440,16 @@ func tokenize(text string) []string {
 	return tokens
 }
 
-func normalize(vec *[]float64) {
+func normalize(vec []float64) {
 	sum := 0.0
-	for _, val := range *vec {
+	for _, val := range vec {
 		sum += val
 	}
 	if sum == 0 {
 		sum = 1e-10 // Small epsilon to prevent division by zero
 	}
-	for i := range *vec {
-		(*vec)[i] /= sum
+	for i := range vec {
+		vec[i] /= sum
 	}
 }
 
@@ -438,17 +457,8 @@ func digamma(x float64) float64 {
 	if x <= 0 {
 		x = 1e-10
 	}
-	result := 0.0
-	for x < 7 {
-		result -= 1 / x
-		x++
-	}
-	x -= 1.0 / 2.0
-	xx := 1.0 / x
-	xx2 := xx * xx
-	xx4 := xx2 * xx2
-	result += math.Log(x) + (1.0/24.0)*xx2 - (7.0/960.0)*xx4
-	return result
+	// Simple approximation of digamma function
+	return math.Log(x) - 1/(2*x)
 }
 
 func converged(a, b []float64, tol float64) bool {
@@ -458,4 +468,11 @@ func converged(a, b []float64, tol float64) bool {
 		}
 	}
 	return true
+}
+
+func checkValid(value float64) float64 {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return 1e-10
+	}
+	return value
 }
