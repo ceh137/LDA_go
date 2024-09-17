@@ -27,7 +27,7 @@ type LDA struct {
 	Lambda      [][]float64 // Topic-word distributions
 	UpdateCount int
 
-	mutex sync.Mutex
+	mutex sync.RWMutex
 }
 
 // NewLDA creates a new LDA model with the specified number of topics.
@@ -119,11 +119,13 @@ func (lda *LDA) GetTopics(numWords int) [][]string {
 	for k := 0; k < lda.NumTopics; k++ {
 		wordProbabilities := make([]wordProbability, lda.VocabularySize)
 		for w := 0; w < lda.VocabularySize; w++ {
+			lda.mutex.RLock()
 			prob := lda.Lambda[k][w]
 			wordProbabilities[w] = wordProbability{
 				word:        lda.Id2word[w],
 				probability: prob,
 			}
+			lda.mutex.RUnlock()
 		}
 		sort.Slice(wordProbabilities, func(i, j int) bool {
 			return wordProbabilities[i].probability > wordProbabilities[j].probability
@@ -244,7 +246,7 @@ func (lda *LDA) initializeLambda() {
 		for w := 0; w < lda.VocabularySize; w++ {
 			lda.Lambda[k][w] = seededRand.Float64() + 1e-2
 		}
-		normalize(lda.Lambda[k])
+		normalize(&lda.Lambda[k])
 	}
 }
 
@@ -255,9 +257,11 @@ func (lda *LDA) onlineUpdate(documents []string) error {
 		words := Tokenize(doc)
 		wordIDs := make([]int, 0, len(words))
 		for _, word := range words {
+			lda.mutex.Lock()
 			if id, ok := lda.Word2id[word]; ok {
 				wordIDs = append(wordIDs, id)
 			}
+			lda.mutex.Unlock()
 		}
 		docs[i] = wordIDs
 	}
@@ -311,7 +315,7 @@ func (lda *LDA) onlineUpdate(documents []string) error {
 				lda.Lambda[k][wordID] = (1-rho)*lda.Lambda[k][wordID] + rho*(lda.Eta+float64(len(docs))*phi[n][k])
 				lda.Lambda[k][wordID] = checkValid(lda.Lambda[k][wordID])
 			}
-			normalize(lda.Lambda[k])
+			normalize(&lda.Lambda[k])
 		}
 	}
 	lda.UpdateCount++
@@ -342,7 +346,9 @@ func (lda *LDA) VariationalInference(doc []int) ([]float64, error) {
 				if gammaK <= 0 {
 					gammaK = epsilon
 				}
+				lda.mutex.RLock()
 				phi_nk[k] = lda.Lambda[k][wordID] * math.Exp(digamma(gammaK))
+				lda.mutex.RUnlock()
 				phi_nk[k] = checkValid(phi_nk[k])
 				sum += phi_nk[k]
 			}
@@ -402,6 +408,7 @@ func (lda *LDA) extendVocabulary(documents []string) {
 	for _, doc := range documents {
 		words := Tokenize(doc)
 		for _, word := range words {
+			lda.mutex.Lock()
 			if _, exists := wordSet[word]; !exists {
 				wordSet[word] = struct{}{}
 				lda.Vocabulary = append(lda.Vocabulary, word)
@@ -410,6 +417,7 @@ func (lda *LDA) extendVocabulary(documents []string) {
 				lda.VocabularySize++
 				newWords++
 			}
+			lda.mutex.Unlock()
 		}
 	}
 	if newWords > 0 {
@@ -419,8 +427,10 @@ func (lda *LDA) extendVocabulary(documents []string) {
 			for i := 0; i < newWords; i++ {
 				newEntries[i] = lda.Eta
 			}
+			lda.mutex.Lock()
 			lda.Lambda[k] = append(lda.Lambda[k], newEntries...)
-			normalize(lda.Lambda[k])
+			normalize(&lda.Lambda[k])
+			lda.mutex.Unlock()
 		}
 	}
 }
@@ -440,16 +450,16 @@ func Tokenize(text string) []string {
 	return tokens
 }
 
-func normalize(vec []float64) {
+func normalize(vec *[]float64) {
 	sum := 0.0
-	for _, val := range vec {
+	for _, val := range *vec {
 		sum += val
 	}
 	if sum == 0 {
 		sum = 1e-10 // Small epsilon to prevent division by zero
 	}
-	for i := range vec {
-		vec[i] /= sum
+	for i := range *vec {
+		(*vec)[i] /= sum
 	}
 }
 
